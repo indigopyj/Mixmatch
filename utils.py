@@ -30,17 +30,37 @@ class SemiLoss(object):
 
         return Lx, Lu, lambda_u * linear_rampup(epoch, num_epoch)
 
+class WeightEMA(object):
+    def __init__(self, model, ema_model, lr, alpha=0.999):
+        self.model = model
+        self.ema_model = ema_model
+        self.alpha = alpha
+        self.params = list(model.state_dict().values())
+        self.ema_params = list(ema_model.state_dict().values())
+        self.wd = 0.02 * lr
+
+        for param, ema_param in zip(self.params, self.ema_params):
+            param.data.copy_(ema_param.data)
+
+    def step(self):
+        for param, ema_param in zip(self.params, self.ema_params):
+            if ema_param.dtype == torch.float32:
+                ema_param.mul_(self.alpha)
+                ema_param.add_(param * (1 - self.alpha))
+                param.mul_(1- self.wd)   # weight decay
+
 '''Some helper functions for PyTorch, including:
     - get_mean_and_std: calculate the mean and std value of dataset.
     - msr_init: net parameter initialization.
     - progress_bar: progress bar mimic xlua.progress.
 '''
 
-def save(result_dir, epoch, model, val_acc, best_acc, optimizer):
+def save(result_dir, epoch, model, ema_model, val_acc, best_acc, optimizer):
     is_best = val_acc > best_acc
     state = {
             'epoch' : epoch + 1,
             'state_dict' : model.state_dict(),
+            'ema_state_dict': ema_model.state_dict(),
             'acc' : val_acc,
             'best_acc' : best_acc,
             'optimizer' : optimizer.state_dict()
@@ -59,8 +79,8 @@ def load(checkpoint):
     start_epoch = checkpoint['epoch']
     model.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer'])
-    
-    return model, optimizer, best_acc, start_epoch
+    ema_model.load_state_dict(checkpoint['ema_state_dict'])
+    return model, optimizer, ema_model, best_acc, start_epoch
 
 def get_mean_and_std(dataset):
     '''Compute the mean and std value of dataset.'''

@@ -30,6 +30,7 @@ def train(args):
     lambda_u = args.lambda_u
     alpha = args.alpha
     train_iteration = args.train_iteration
+    ema_decay = args.ema_decay
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     best_acc = 0
@@ -38,6 +39,8 @@ def train(args):
 
     if not os.path.isdir(result_dir):
         mkdir_p(result_dir)
+    if not os.path.isdir(log_dir):
+        mkdir_p(log_dir)
 
     
     transform_train = transforms.Compose([
@@ -57,15 +60,21 @@ def train(args):
     model = WideResNet(num_classes=10)
     model = model.to(device)
 
+    ema_model = WideResNet(num_classes=10)
+    ema_model = ema_model.to(device)
+    for param in ema_model.parameters():
+        param.detach_()
+
     cudnn.benchmark = True  # looking for optimal algorithms for this device
     
     train_criterion = SemiLoss()
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
+    ema_optimizer= WeightEMA(model, ema_model, lr, alpha=ema_decay)
     start_epoch = 0
 
     if train_continue == "on":
-        model, optimizer, best_acc, start_epoch = load(checkpoint)
+        model, optimizer, ema_model, best_acc, start_epoch = load(checkpoint)
     
     writer = SummaryWriter(log_dir)
     step = 0
@@ -152,10 +161,6 @@ def train(args):
 
             loss = Lx + w * Lu
 
-        #losses.update(loss.item(), inputs_x.size(0))
-        #losses_x.update(Lx.item(), inputs_x.size(0))
-        #losses_u.update(Lu.item(), inputs_x.size(0))
-        #ws.update(w, inputs_x.size(0))
             train_losses.add(loss.item())
             train_losses_x.add(Lx.item())
             train_losses_u.add(Lu.item())
@@ -164,6 +169,7 @@ def train(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            ema_optimizer.step()
 
             bar.suffix = '({batch}/{size}) Loss: {loss:.4f} | Loss_x : {loss_x:.4f} | Loss_u : {loss_u:.4f} | W: {w:.4f}'.format(
                     batch=batch_idx+1,
@@ -187,13 +193,13 @@ def train(args):
         bar_T = Bar('Train Stats', max=len(labeled_trainloader))
         bar_V = Bar('Valid Stats', max=len(val_loader))
     
-        model.eval()
+        ema_model.eval()
 
         with torch.no_grad():
             for batch_idx, (inputs, targets) in enumerate(labeled_trainloader):
                 inputs, targets = inputs.to(device), targets.to(device)
 
-                outputs = model(inputs)
+                outputs = ema_model(inputs)
                 loss = criterion(outputs, targets)
             
                 T_val_losses.add(loss.item())
@@ -212,7 +218,7 @@ def train(args):
             for batch_idx, (inputs, targets) in enumerate(val_loader):
                 inputs, targets = inputs.to(device), targets.to(device)
 
-                outputs = model(inputs)
+                outputs = ema_model(inputs)
                 loss = criterion(outputs, targets)
 
                 V_val_losses.add(loss.item())
@@ -238,7 +244,7 @@ def train(args):
         writer.add_scalar('accuracy/train_acc', train_acc, step)
         writer.add_scalar('accuracy/val_acc', val_acc, step)
         best_acc = max(val_acc, best_acc)
-        save(result_dir, epoch, model, val_acc, best_acc, optimizer)
+        save(result_dir, epoch, model, ema_model, val_acc, best_acc, optimizer)
 
     writer.close()
 
@@ -274,8 +280,12 @@ def test(args):
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
 
 
-    model = WideResNet(num_classes=10)
-    model = model.to(device)
+    ema_model = WideResNet(num_classes=10)
+    ema_model = model.to(device)
+    for param in ema_model.parameters():
+                param.detach_()
+
+    criterion = nn.CrossEntropyLoss()
 
     cudnn.benchmark = True  # looking for optimal algorithms for this device
 
@@ -288,13 +298,13 @@ def test(args):
         test_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1,5])
         bar = Bar('Train Stats', max=len(labeled_trainloader))
 
-        model.eval()
+        ema_model.eval()
 
         with torch.no_grad():
             for batch_idx, (inputs, targets) in enumerate(labeled_trainloader):
                 inputs, targets = inputs.to(device), targets.to(device)
 
-                outputs = model(inputs)
+                outputs = ema_model(inputs)
                 loss = criterion(outputs, targets)
 
                 test_losses.add(loss.item())
