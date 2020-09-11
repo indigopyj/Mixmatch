@@ -71,7 +71,7 @@ def save(result_dir, epoch, model, ema_model, val_acc, best_acc, optimizer):
     if is_best:
         shutil.copyfile(filepath, os.path.join(result_dir, 'model_best.pth.tar'))
 
-def load(checkpoint):
+def load(checkpoint, model, ema_model, optimizer):
     assert os.path.isfile(checkpoint), 'Error : no checkpoint directory found'
     result_dir = os.path.dirname(checkpoint)
     checkpoint = torch.load(checkpoint)

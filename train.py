@@ -74,7 +74,7 @@ def train(args):
     start_epoch = 0
 
     if train_continue == "on":
-        model, optimizer, ema_model, best_acc, start_epoch = load(checkpoint)
+        model, optimizer, ema_model, best_acc, start_epoch = load(checkpoint, model, ema_model, optimizer)
     
     writer = SummaryWriter(log_dir)
     step = 0
