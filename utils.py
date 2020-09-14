@@ -77,8 +77,10 @@ def load(checkpoint, model, ema_model, optimizer):
     checkpoint = torch.load(checkpoint)
     best_acc = checkpoint['best_acc']
     start_epoch = checkpoint['epoch']
-    model.load_state_dict(checkpoint['state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
+    if model is not None:
+        model.load_state_dict(checkpoint['state_dict'])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer'])
     ema_model.load_state_dict(checkpoint['ema_state_dict'])
     return model, optimizer, ema_model, best_acc, start_epoch
 

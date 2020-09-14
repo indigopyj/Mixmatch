@@ -263,45 +263,47 @@ def test(args):
     train_continue = args.train_continue
     T = args.T
     n_labeled = args.n_labeled
+    result_dir = args.result_dir
     data_dir = args.data_dir
-    log_dir = os.path.join(args.log_dir, "test")
     train_iteration = args.train_iteration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     np.random.seed(0)
 
-    if not os.path.isdir(log_dir):
-        mkdir_p(log_dir)
+    if not os.path.isdir(result_dir):
+        mkdir_p(result_dir)
 
     transform_test = transforms.Compose([
                 ToTensor()
             ])
-    test_set = get_cifar10('./data', n_labeled, transform_val=transform_val, mode="test")
+    test_set = get_cifar10('./data', n_labeled, transform_val=transform_test, mode="test")
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
 
 
     ema_model = WideResNet(num_classes=10)
-    ema_model = model.to(device)
+    ema_model = ema_model.to(device)
     for param in ema_model.parameters():
                 param.detach_()
 
     criterion = nn.CrossEntropyLoss()
-
     cudnn.benchmark = True  # looking for optimal algorithms for this device
-
-    writer = SummaryWriter(args.out)
+    
     step = 0
     test_accs = []
 
-    for epoch in range(start_epoch, num_epoch):
+    # compute the median accuracy of the last 20 checkpoints of test accuracy
+    for i in range(1, 21):
+        checkpoint = os.path.join(result_dir, 'checkpoint'+ str(num_epoch - i) + '.pth.tar')
+        _, _, ema_model, _, _ = load(checkpoint, None, ema_model, None)
+
         test_losses = tnt.meter.AverageValueMeter()
         test_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1,5])
-        bar = Bar('Train Stats', max=len(labeled_trainloader))
+        bar = Bar('Test Stats', max=len(test_loader))
 
         ema_model.eval()
 
         with torch.no_grad():
-            for batch_idx, (inputs, targets) in enumerate(labeled_trainloader):
+            for batch_idx, (inputs, targets) in enumerate(test_loader):
                 inputs, targets = inputs.to(device), targets.to(device)
 
                 outputs = ema_model(inputs)
@@ -322,18 +324,10 @@ def test(args):
 
 
         Test_loss, Test_acc = test_losses.value()[0], test_acc.value(k=1)
-        step = args.train_iteration * (epoch + 1)
-        writer.add_scalar('losses/test_loss', Test_loss, step)
-        writer.add_scalar('accuracy/test_acc', Test_acc, step)
 
         test_accs.append(Test_acc)
-        writer.close()
-        print("Mean acc: ")
-        print(np.mean(test_accs[-20:]))
-
-
-
-        
+    print("Mean acc: ")
+    print(np.mean(test_accs))
 
 
 def interleave_offsets(batch, nu):
