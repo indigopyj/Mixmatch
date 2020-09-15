@@ -55,8 +55,7 @@ class WeightEMA(object):
     - progress_bar: progress bar mimic xlua.progress.
 '''
 
-def save(result_dir, epoch, model, ema_model, val_acc, best_acc, optimizer):
-    is_best = val_acc > best_acc
+def save(result_dir, epoch, model, ema_model, val_acc, best_acc, is_best, optimizer):
     state = {
             'epoch' : epoch + 1,
             'state_dict' : model.state_dict(),

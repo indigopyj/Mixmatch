@@ -12,12 +12,31 @@ class TransformTwice:
         out2 = self.transform(inp)
         return out1, out2
 
+def get_SVHN(root, n_labeled, transform_train=None, transform_val=None, download=True, mode="train", extra=False):
+    base_train_dataset = torchvision.datasets.SVHN(root, split="train", download=download)
+    
+    # split train and val
+    train_labeled_idxs, train_unlabeled_idxs, val_idxs = train_val_split(base_train_dataset.labels, int(n_labeled/10), num_val=700)
+
+    if mode == "train":
+        train_labeled_dataset = SVHN_labeled(root, train_labeled_idxs, split="train", transform=transform_train)
+        train_unlabeled_dataset = SVHN_unlabeled(root, train_unlabeled_idxs, split="train", extra=extra, transform=TransformTwice(transform_train))
+        val_dataset = SVHN_labeled(root, val_idxs, split="train", transform=transform_val, download=True)
+        print (f"#Labeled: {len(train_labeled_idxs)} #Unlabeled: {len(train_unlabeled_idxs)} #Val: {len(val_idxs)}")
+        return train_labeled_dataset, train_unlabeled_dataset, val_dataset
+    elif mode=="test":
+        test_dataset = SVHN_labeled(root, split="test", transform=transform_val, download=True)
+        return test_dataset
+
+
+
+
 def get_cifar10(root, n_labeled,
                  transform_train=None, transform_val=None,
                  download=True, mode="train"):
 
     base_dataset = torchvision.datasets.CIFAR10(root, train=True, download=download)
-    train_labeled_idxs, train_unlabeled_idxs, val_idxs = train_val_split(base_dataset.targets, int(n_labeled/10))
+    train_labeled_idxs, train_unlabeled_idxs, val_idxs = train_val_split(base_dataset.targets, int(n_labeled/10), num_val=500)
     
     if mode =="train":
         train_labeled_dataset = CIFAR10_labeled(root, train_labeled_idxs, train=True, transform=transform_train)
@@ -29,7 +48,7 @@ def get_cifar10(root, n_labeled,
         test_dataset = CIFAR10_labeled(root, train=False, transform=transform_val, download=True)
         return test_dataset
 
-def train_val_split(labels, n_labeled_per_class):
+def train_val_split(labels, n_labeled_per_class, num_val):
     labels = np.array(labels)
     train_labeled_idxs = []
     train_unlabeled_idxs = []
@@ -39,8 +58,8 @@ def train_val_split(labels, n_labeled_per_class):
         idxs = np.where(labels == i)[0]
         np.random.shuffle(idxs)
         train_labeled_idxs.extend(idxs[:n_labeled_per_class])
-        train_unlabeled_idxs.extend(idxs[n_labeled_per_class:-500])
-        val_idxs.extend(idxs[-500:])
+        train_unlabeled_idxs.extend(idxs[n_labeled_per_class:-num_val])
+        val_idxs.extend(idxs[-num_val:])
     np.random.shuffle(train_labeled_idxs)
     np.random.shuffle(train_unlabeled_idxs)
     np.random.shuffle(val_idxs)
@@ -50,9 +69,11 @@ def train_val_split(labels, n_labeled_per_class):
 
 cifar10_mean = (0.4914, 0.4822, 0.4465) # equals np.mean(train_set.train_data, axis=(0,1,2))/255
 cifar10_std = (0.2471, 0.2435, 0.2616) # equals np.std(train_set.train_data, axis=(0,1,2))/255
-
+svhn_mean = (0.5071, 0.4867, 0.4408)
+svhn_std = (0.2675, 0.2565, 0.2761)
 def normalise(x, mean=cifar10_mean, std=cifar10_std):
     x, mean, std = [np.array(a, np.float32) for a in (x, mean, std)]
+    
     x -= mean*255
     x *= 1.0/(255*std)
     return x
@@ -111,7 +132,7 @@ class CIFAR10_labeled(torchvision.datasets.CIFAR10):
             self.data = self.data[indexs]
             self.targets = np.array(self.targets)[indexs]
 
-        self.data = transpose(normalise(self.data))
+        self.data = transpose(normalise(self.data)) # convert to CHW
 
     def __getitem__(self, index):
         """
@@ -121,7 +142,7 @@ class CIFAR10_labeled(torchvision.datasets.CIFAR10):
             tuple: (image, target) where target is index of the target class.
         """
         img, target = self.data[index], self.targets[index]
-
+        
         if self.transform is not None:
             img = self.transform(img)
 
@@ -140,3 +161,56 @@ class CIFAR10_unlabeled(CIFAR10_labeled):
                  transform=transform, target_transform=target_transform,
                  download=download)
         self.targets = np.array([-1 for i in range(len(self.targets))])
+
+
+
+
+class SVHN_labeled(torchvision.datasets.SVHN):
+    def __init__(self, root, indexs=None, split="train",
+                 transform=None, target_transform=None,
+                 download=False):
+        super(SVHN_labeled, self).__init__(root, split=split,
+                 transform=transform, target_transform=target_transform,
+                 download=download)
+        if indexs is not None:
+            self.data = self.data[indexs]
+            self.labels = np.array(self.labels)[indexs]
+
+        self.data = transpose(self.data, source="NCHW", target="NHWC")
+        self.data = transpose(normalise(self.data, mean=svhn_mean, std=svhn_std))
+
+    def __getitem__(self, index):
+        """
+        Args:
+            index (int): Index
+        Returns:
+            tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], int(self.labels[index])
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
+
+
+class SVHN_unlabeled(SVHN_labeled):
+
+    def __init__(self, root, indexs, split="train", extra=False,
+                 transform=None, target_transform=None,
+                 download=False):
+        super(SVHN_unlabeled, self).__init__(root, indexs, split=split,
+                 transform=transform, target_transform=target_transform,
+                 download=download)
+        
+        if(extra):
+            extra_dataset = torchvision.datasets.SVHN(root, split="extra", download=True)
+            self.data = np.concatenate([self.data, extra_dataset.data], axis=0)
+            np.random.shuffle(self.data)
+            total_length = len(np.array(self.labels)) + len(np.array(extra_dataset.labels))
+            self.labels = np.array([-1 for i in range(total_length)])
+        else:
+            self.targets = np.array([-1 for i in range(len(self.targets))])
+

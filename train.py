@@ -51,11 +51,14 @@ def train(args):
     transform_val = transforms.Compose([
         ToTensor()
         ])
-    train_labeled_set, train_unlabeled_set, val_set = get_cifar10('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
+    # Get dataset for CIFAR10
+    #train_labeled_set, train_unlabeled_set, val_set = get_cifar10('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
+    # Get dataset for SVHN(with extra or without extra)
+    extra = True
+    train_labeled_set, train_unlabeled_set, val_set = get_SVHN('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train", extra=extra)
     labeled_trainloader = DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     unlabeled_trainloader = DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
-
     
     model = WideResNet(num_classes=10)
     model = model.to(device)
@@ -84,10 +87,6 @@ def train(args):
 
         ######################################################################## Train
 
-        #losses = AverageMeter()
-        #losses_x = AverageMeter()
-        #losses_u = AverageMeter()
-        #ws = AverageMeter()
         train_losses = tnt.meter.AverageValueMeter()
         train_losses_x = tnt.meter.AverageValueMeter()
         train_losses_u = tnt.meter.AverageValueMeter()
@@ -243,8 +242,10 @@ def train(args):
         writer.add_scalar('losses/val_loss', val_loss, step)
         writer.add_scalar('accuracy/train_acc', train_acc, step)
         writer.add_scalar('accuracy/val_acc', val_acc, step)
+        #best_acc = max(val_acc, best_acc)
+        is_best = val_acc > best_acc
         best_acc = max(val_acc, best_acc)
-        save(result_dir, epoch, model, ema_model, val_acc, best_acc, optimizer)
+        save(result_dir, epoch, model, ema_model, val_acc, best_acc, is_best, optimizer)
 
     writer.close()
 
