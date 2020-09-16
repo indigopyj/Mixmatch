@@ -43,14 +43,15 @@
 - **Test accuracy : 90.593**
 
 ### Cifar10 2000 examples
+<img width="500" src="https://user-images.githubusercontent.com/17904547/93293966-434f4100-f824-11ea-8a5a-c99d1c110838.png">
 
-
-- **Test accuracy : **
+- **Test accuracy : 92.625**
 
 ### Cifar10 4000 examples
 
+<img width="500" src="https://user-images.githubusercontent.com/17904547/93294014-61b53c80-f824-11ea-8a65-7d112e55972d.png">
 
-- **Test accuracy : **
+- **Test accuracy : 93.443**
 
 
 ## Comparison with paper
@@ -58,6 +59,6 @@
 |#Labels|250|500|1000|2000|4000|
 |-------|---|---|----|----|----|
 |Paper| 88.92 ± 0.87|90.35 ± 0.94|92.25 ± 0.32|92.97 ± 0.15|93.76 ± 0.06|
-|This code|88.990|90.473|90.593|-|-|
+|This code|88.990|90.473|90.593|92.625|93.443|
 
 
