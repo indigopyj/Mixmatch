@@ -32,10 +32,10 @@ def train(args):
     train_iteration = args.train_iteration
     ema_decay = args.ema_decay
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    data_type = args.data_type
     best_acc = 0
 
-    np.random.seed(0)
+    np.random.seed(1)
 
     if not os.path.isdir(result_dir):
         mkdir_p(result_dir)
@@ -51,11 +51,30 @@ def train(args):
     transform_val = transforms.Compose([
         ToTensor()
         ])
-    # Get dataset for CIFAR10
-    #train_labeled_set, train_unlabeled_set, val_set = get_cifar10('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
-    # Get dataset for SVHN(with extra or without extra)
-    extra = True
-    train_labeled_set, train_unlabeled_set, val_set = get_SVHN('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train", extra=extra)
+    
+    if data_type == "cifar10":
+        train_labeled_set, train_unlabeled_set, val_set = get_cifar10('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
+    elif data_type == "svhn":
+        transform_train = transforms.Compose([
+        RandomPadandCrop(32),
+        ToTensor()
+        ])
+        train_labeled_set, train_unlabeled_set, val_set = get_SVHN('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train", extra=False)
+    elif data_type == "svhn_extra":
+        transform_train = transforms.Compose([
+        RandomPadandCrop(32),
+        ToTensor(),
+        ])
+        train_labeled_set, train_unlabeled_set, val_set = get_SVHN('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train", extra=true)
+    else:
+        transform_train = transforms.Compose([
+            RandomPadandCrop(32),
+            RandomFlip(),
+            ToTensor(),
+            #transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ])
+        train_labeled_set, train_unlabeled_set, val_set = get_gender('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
+
     labeled_trainloader = DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     unlabeled_trainloader = DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -259,6 +278,7 @@ def test(args):
     lr = args.lr
     batch_size = args.batch_size
     num_epoch = args.num_epoch
+    data_type = args.data_type
 
     mode = args.mode
     train_continue = args.train_continue
@@ -277,9 +297,18 @@ def test(args):
     transform_test = transforms.Compose([
                 ToTensor()
             ])
-    test_set = get_cifar10('./data', n_labeled, transform_val=transform_test, mode="test")
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
 
+    if data_type == "cifar10":
+        test_set = get_cifar10('./data', n_labeled, transform_val=transform_test, mode="test")
+    elif data_type == "svhn":
+        test_set = get_SVHN('./data', n_labeled, transform_val=transform_test, mode="test", extra=False)
+    elif data_type == "svhn_extra":
+        test_set = get_SVHN('./data', n_labeled, transform_val=transform_test, mode="test", extra=True)
+    else:
+        test_set = get_gender('./data', n_labeled, transform_val=transform_test, mode="test")
+
+    test_set = get_SVHN('./data', n_labeled, transform_val=transform_test, mode="test", extra=False)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
 
     ema_model = WideResNet(num_classes=10)
     ema_model = ema_model.to(device)
@@ -292,8 +321,38 @@ def test(args):
     step = 0
     test_accs = []
 
+    # compute the accuracy of the best model
+    checkpoint = os.path.join(result_dir, 'model_best.pth.tar')
+    _, _, ema_model,_, _ = load(checkpoint, None, ema_model, None)
+    test_losses = tnt.meter.AverageValueMeter()
+    test_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1,5])
+    bar = Bar('Test Stats', max=len(test_loader))
+
+    ema_model.eval()
+
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
+            inputs, targets = inputs.to(device), targets.to(device)
+
+            outputs = ema_model(inputs)
+            loss = criterion(outputs, targets)
+
+            test_losses.add(loss.item())
+            test_acc.add(outputs.data.cpu(), targets.cpu().numpy())
+
+            bar.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                    batch=batch_idx+1,
+                    size=len(test_loader),
+                    loss=test_losses.value()[0],
+                    top1=test_acc.value(k=1),
+                    top5=test_acc.value(k=5))
+
+            bar.next()
+        bar.finish()
+
+
     # compute the median accuracy of the last 20 checkpoints of test accuracy
-    for i in range(1, 21):
+    '''for i in range(1, 21):
         checkpoint = os.path.join(result_dir, 'checkpoint'+ str(num_epoch - i) + '.pth.tar')
         _, _, ema_model, _, _ = load(checkpoint, None, ema_model, None)
 
@@ -322,11 +381,11 @@ def test(args):
 
                 bar.next()
             bar.finish()
+'''
 
+    Test_loss, Test_acc = test_losses.value()[0], test_acc.value(k=1)
 
-        Test_loss, Test_acc = test_losses.value()[0], test_acc.value(k=1)
-
-        test_accs.append(Test_acc)
+    test_accs.append(Test_acc)
     print("Mean acc: ")
     print(np.mean(test_accs))
 
