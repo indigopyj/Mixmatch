@@ -33,6 +33,7 @@ def train(args):
     ema_decay = args.ema_decay
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     data_type = args.data_type
+    n_classes = args.n_classes
     best_acc = 0
 
     np.random.seed(1)
@@ -56,33 +57,40 @@ def train(args):
         train_labeled_set, train_unlabeled_set, val_set = get_cifar10('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
     elif data_type == "svhn":
         transform_train = transforms.Compose([
-        RandomPadandCrop(32),
-        ToTensor()
+            RandomPadandCrop(32),
+            ToTensor()
         ])
         train_labeled_set, train_unlabeled_set, val_set = get_SVHN('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train", extra=False)
     elif data_type == "svhn_extra":
         transform_train = transforms.Compose([
-        RandomPadandCrop(32),
-        ToTensor(),
+            RandomPadandCrop(32),
+            ToTensor(),
         ])
         train_labeled_set, train_unlabeled_set, val_set = get_SVHN('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train", extra=true)
     else:
         transform_train = transforms.Compose([
-            RandomPadandCrop(32),
-            RandomFlip(),
-            ToTensor(),
-            #transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            transforms.Resize([32,32]),
+            transforms.RandomHorizontalFlip(),
+            transforms.Pad(padding=4, padding_mode='reflect'),
+            transforms.RandomCrop(size=32),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])
+        transform_val = transforms.Compose([
+            transforms.Resize([32, 32]),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             ])
         train_labeled_set, train_unlabeled_set, val_set = get_gender('./data', n_labeled, transform_train=transform_train, transform_val=transform_val, mode="train")
 
-    labeled_trainloader = DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
-    unlabeled_trainloader = DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    labeled_trainloader = DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
+    unlabeled_trainloader = DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=4, drop_last=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
-    
-    model = WideResNet(num_classes=10)
+
+    model = WideResNet(num_classes=n_classes)
     model = model.to(device)
 
-    ema_model = WideResNet(num_classes=10)
+    ema_model = WideResNet(num_classes=n_classes)
     ema_model = ema_model.to(device)
     for param in ema_model.parameters():
         param.detach_()
@@ -122,21 +130,17 @@ def train(args):
                 labeled_train_iter = iter(labeled_trainloader)
                 inputs_x, targets_x = labeled_train_iter.next()
 
-
             try:
                 (inputs_u, inputs_u2), _ = unlabeled_train_iter.next()
             except:
                 unlabeled_train_iter = iter(unlabeled_trainloader)
                 (inputs_u, inputs_u2), _ = unlabeled_train_iter.next()
 
-
-
             batch_size = inputs_x.size(0)
-            
             # Transform label to one-hot
             # scatter_(dim, index, [source,] value) : 대상 텐서에, index에 해당하는 위치에 대응되는 src의 값을 넣어줌.
             # 즉 src와 index가 모양이 같아야함. src가 없으면 value가 들어감.
-            targets_x = torch.zeros(batch_size, 10).scatter_(1, targets_x.view(-1, 1).long(), 1)
+            targets_x = torch.zeros(batch_size, n_classes).scatter_(1, targets_x.view(-1, 1).long(), 1)
             
             inputs_x = inputs_x.to(device)
             targets_x = targets_x.to(device, non_blocking=True)
@@ -206,8 +210,8 @@ def train(args):
         ################################################## validate
         T_val_losses = tnt.meter.AverageValueMeter()
         V_val_losses = tnt.meter.AverageValueMeter()
-        T_val_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1,5])
-        V_val_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1,5])
+        T_val_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1])
+        V_val_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1])
         bar_T = Bar('Train Stats', max=len(labeled_trainloader))
         bar_V = Bar('Valid Stats', max=len(val_loader))
     
@@ -216,38 +220,36 @@ def train(args):
         with torch.no_grad():
             for batch_idx, (inputs, targets) in enumerate(labeled_trainloader):
                 inputs, targets = inputs.to(device), targets.to(device)
-
+                
                 outputs = ema_model(inputs)
                 loss = criterion(outputs, targets)
             
                 T_val_losses.add(loss.item())
                 T_val_acc.add(outputs.data.cpu(), targets.cpu().numpy())
             
-                bar_T.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                bar_T.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f}'.format(
                 batch=batch_idx+1,
                 size=len(labeled_trainloader),
                 loss=T_val_losses.value()[0],
-                top1=T_val_acc.value(k=1),
-                top5=T_val_acc.value(k=5))
+                top1=T_val_acc.value(k=1))
                
                 bar_T.next()
             bar_T.finish()
-
+            
             for batch_idx, (inputs, targets) in enumerate(val_loader):
                 inputs, targets = inputs.to(device), targets.to(device)
-
+                
                 outputs = ema_model(inputs)
                 loss = criterion(outputs, targets)
 
                 V_val_losses.add(loss.item())
                 V_val_acc.add(outputs.data.cpu(), targets.cpu().numpy())
 
-                bar_V.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+                bar_V.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f}'.format(
                     batch=batch_idx+1,
                     size=len(val_loader),
                     loss=V_val_losses.value()[0],
-                    top1=V_val_acc.value(k=1),
-                    top5=V_val_acc.value(k=5))
+                    top1=V_val_acc.value(k=1))
 
                 bar_V.next()
             bar_V.finish()
@@ -261,7 +263,6 @@ def train(args):
         writer.add_scalar('losses/val_loss', val_loss, step)
         writer.add_scalar('accuracy/train_acc', train_acc, step)
         writer.add_scalar('accuracy/val_acc', val_acc, step)
-        #best_acc = max(val_acc, best_acc)
         is_best = val_acc > best_acc
         best_acc = max(val_acc, best_acc)
         save(result_dir, epoch, model, ema_model, val_acc, best_acc, is_best, optimizer)

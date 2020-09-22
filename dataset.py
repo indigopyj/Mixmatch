@@ -3,6 +3,8 @@ from PIL import Image
 import torchvision
 import torch
 import os
+import torch.nn.functional as F
+from collections.abc import Sequence, Iterable
 
 class TransformTwice:
     def __init__(self, transform):
@@ -32,10 +34,10 @@ def get_SVHN(root, n_labeled, transform_train=None, transform_val=None, download
 
 def get_gender(root, n_labeled, transform_train=None, transform_val=None, mode="train"):
     data_dir = os.path.join(root, "gender_738k")
-    train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(data_dir, "train"), transform=transform_train)
-    val_dataset = torchvision.datasets.ImageFolder(root=os.path.join(data_dir, "val"), transform=transform_train)
+    train_dataset = torchvision.datasets.ImageFolder(root=os.path.join(data_dir, "train"))
+    val_dataset = torchvision.datasets.ImageFolder(root=os.path.join(data_dir, "val"))
     
-    train_labeled_idxs, train_unlabeled_idxs, val_idxs = gender_train_val_split(train_dataset.targets, val_dataset.targets, int(n_labeled/2))
+    train_labeled_idxs, train_unlabeled_idxs, val_idxs = gender_train_val_split(train_dataset.targets, val_dataset.targets, int(n_labeled/2), num_val=500)
     if mode == "train":
         train_labeled_dataset = Gender_labeled(os.path.join(data_dir, "train"), train_labeled_idxs, transform=transform_train)
         train_unlabeled_dataset = Gender_unlabeled(os.path.join(data_dir, "train"), train_unlabeled_idxs, transform=TransformTwice(transform_train))
@@ -83,7 +85,7 @@ def train_val_split(labels, n_labeled_per_class, num_val):
     
     return train_labeled_idxs, train_unlabeled_idxs, val_idxs
 
-def gender_train_val_split(train_labels, val_labels, n_labeled_per_class):
+def gender_train_val_split(train_labels, val_labels, n_labeled_per_class, num_val):
     train_labels = np.array(train_labels)
     val_labels = np.array(val_labels)
     train_labeled_idxs = []
@@ -97,12 +99,12 @@ def gender_train_val_split(train_labels, val_labels, n_labeled_per_class):
         np.random.shuffle(v_idxs)
         train_labeled_idxs.extend(t_idxs[:n_labeled_per_class])
         train_unlabeled_idxs.extend(t_idxs[n_labeled_per_class:])
-        val_idxs.extend(v_idxs)
+        val_idxs.extend(v_idxs[:num_val])
     
     np.random.shuffle(train_labeled_idxs)
     np.random.shuffle(train_unlabeled_idxs)
     np.random.shuffle(val_idxs)
-
+    
     return train_labeled_idxs, train_unlabeled_idxs, val_idxs
 
 
@@ -123,8 +125,10 @@ def normalise(x, mean=cifar10_mean, std=cifar10_std):
 def transpose(x, source='NHWC', target='NCHW'):
     return x.transpose([source.index(d) for d in target]) 
 
+
 class RandomPadandCrop(object):
-    def __init__(self,output_size):
+    def __init__(self,output_size, border_size=4):
+        self.border_size = border_size
         assert isinstance(output_size, (int, tuple))
         if isinstance(output_size, int):
             self.output_size = (output_size, output_size)
@@ -133,9 +137,10 @@ class RandomPadandCrop(object):
             self.output_size = output_size
     
     def __call__(self,x):
-        border = 4
+        border = self.border_size
         x = np.pad(x, [(0, 0), (border, border), (border, border)], mode='reflect')
         h,w = x.shape[1:]
+        print(x.shape)
         new_h, new_w = self.output_size
         top = np.random.randint(0, h - new_h)
         left = np.random.randint(0, w - new_w)
@@ -158,6 +163,7 @@ class ToTensor(object):
     def __call__(self, x):
         x = torch.from_numpy(x)
         return x
+
 
 class CIFAR10_labeled(torchvision.datasets.CIFAR10):
 
@@ -262,9 +268,8 @@ class Gender_labeled(torchvision.datasets.ImageFolder):
         if indexs is not None:
             self.samples = [self.samples[i] for i in indexs]
         
-        self.imgs = self.samples
-        #self.imgs = transpose(normalise(self.imgs, mean=gender_mean, std=gender_std)) # convert to CHW
-
+        self.imgs = [self.loader(s[0]) for s in self.samples]
+        self.targets = np.array([s[1] for s in self.samples])
     
     def __getitem__(self, index):
         """
@@ -273,24 +278,16 @@ class Gender_labeled(torchvision.datasets.ImageFolder):
         Returns:
             tuple: (image, target) where target is index of the target class.
         """
-        path, target = self.samples[index]
-        sample = np.array(self.loader(path))
-        sample = normalise(sample)
-        sample = np.transpose(sample,(2,0,1))
+       
+        img, target = self.imgs[index], int(self.targets[index])
 
-        #img, target = self.data[index], int(self.targets[index])
         if self.transform is not None:
-            sample = self.transform(sample)
+            img = self.transform(img)
 
         if self.target_transform is not None:
             target = self.target_transform(target)
-
-       # source = "HWC"
-        #target = "CHW"
-        #sample = sample.transpose([source.index(d) for d in target])
-        #self.sample = transpose(normalise(self.sample, mean=gender_mean, std=gender_std)) # convert to CHW
         
-        return sample, target
+        return img, target
 
 class Gender_unlabeled(Gender_labeled):
     def __init__(self, root, indexs, transform=None, target_transform=None):
