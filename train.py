@@ -288,6 +288,8 @@ def test(args):
     result_dir = args.result_dir
     data_dir = args.data_dir
     train_iteration = args.train_iteration
+    data_type = args.data_type
+    n_classes = args.n_classes
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     np.random.seed(0)
@@ -306,12 +308,16 @@ def test(args):
     elif data_type == "svhn_extra":
         test_set = get_SVHN('./data', n_labeled, transform_val=transform_test, mode="test", extra=True)
     else:
+        transform_test = transforms.Compose([
+            transforms.Resize([32, 32]),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ])
         test_set = get_gender('./data', n_labeled, transform_val=transform_test, mode="test")
 
-    test_set = get_SVHN('./data', n_labeled, transform_val=transform_test, mode="test", extra=False)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    ema_model = WideResNet(num_classes=10)
+    ema_model = WideResNet(num_classes=n_classes)
     ema_model = ema_model.to(device)
     for param in ema_model.parameters():
                 param.detach_()
@@ -326,7 +332,7 @@ def test(args):
     checkpoint = os.path.join(result_dir, 'model_best.pth.tar')
     _, _, ema_model,_, _ = load(checkpoint, None, ema_model, None)
     test_losses = tnt.meter.AverageValueMeter()
-    test_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1,5])
+    test_acc = tnt.meter.ClassErrorMeter(accuracy=True, topk=[1])
     bar = Bar('Test Stats', max=len(test_loader))
 
     ema_model.eval()
@@ -341,12 +347,11 @@ def test(args):
             test_losses.add(loss.item())
             test_acc.add(outputs.data.cpu(), targets.cpu().numpy())
 
-            bar.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
+            bar.suffix = '({batch}/{size}) Loss: {loss:.4f} | top1: {top1: .4f}'.format(
                     batch=batch_idx+1,
                     size=len(test_loader),
                     loss=test_losses.value()[0],
-                    top1=test_acc.value(k=1),
-                    top5=test_acc.value(k=5))
+                    top1=test_acc.value(k=1))
 
             bar.next()
         bar.finish()
